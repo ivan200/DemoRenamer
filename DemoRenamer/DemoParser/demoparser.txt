@@ -1,0 +1,760 @@
+﻿
+define ('Q3_MESSAGE_MAX_SIZE', 0x4000);
+define ('Q3_MAX_STRING_CHARS', 1024);
+define ('Q3_BIG_INFO_STRING', 8192);
+define ('Q3_MAX_CONFIGSTRINGS', 1024);
+define ('Q3_PERCENT_CHAR_BYTE', 37);
+define ('Q3_DOT_CHAR_BYTE', 46);
+
+class Myparser {
+    function parsedemo(demo)
+    {
+        Q3HuffmanMapper.__init ();
+        return Q3DemoParser.getFriendlyConfig(demo);
+    }
+}
+
+final class Q3Const {
+    const MAX_CONFIGSTRINGS = 1024;
+    const Q3_DEMO_CFG_FIELD_CLIENT = 0;
+    const Q3_DEMO_CFG_FIELD_GAME = 1;
+    const Q3_DEMO_CFG_FIELD_PLAYER = 544;
+}
+
+/**
+ * Q3 server commands
+ */
+final class Q3_SVC {
+    const BAD = 0;  // not used in demos
+    const NOP = 1;  // not used in demos
+    const GAMESTATE = 2;
+    const CONFIGSTRING = 3; // only inside gamestate
+    const BASELINE = 4;     // only inside gamestate
+    const SERVERCOMMAND = 5;
+    const DOWNLOAD = 6; // not used in demos
+    const SNAPSHOT = 7;
+    const EOF = 8;
+}
+
+define('Q3_HUFFMAN_NYT_SYM', 0xFFFFFFFF);
+
+class Q3HuffmanReader {
+
+    private stream;
+
+    /**
+     * HFReader constructor.
+     */
+    public function __construct(buffer)
+    {
+        this.stream = new BitStreamReader(buffer);
+    }
+
+    public function isEOD() {
+        return (bool)this.stream.isEOD();
+    }
+
+    public function readNumBits(bits) {
+        value = 0;
+        neg = bits < 0;
+
+        if (neg)
+            bits = bits*-1;
+
+        fragmentBits = bits & 7;
+
+        if (fragmentBits != 0) {
+            value = this.stream.readBits(fragmentBits);
+            bits -= fragmentBits;
+        }
+
+        if (bits > 0) {
+            decoded = 0;
+            for (i = 0; i < bits; i+=8) {
+                sym = Q3HuffmanMapper.decodeSymbol(this.stream);
+                if (sym == Q3_HUFFMAN_NYT_SYM)
+                    return -1;
+
+                decoded |= (sym << i);
+            }
+
+            if (fragmentBits > 0)
+                decoded <<= fragmentBits;
+
+            value |= decoded;
+        }
+
+        if (neg) {
+            if ( (value & ( 1 << ( bits - 1 ))) != 0 ) {
+                value |= -1 ^ ( ( 1 << bits ) - 1 );
+            }
+        }
+
+        return value;
+    }
+
+    public function readNumber(bits) {
+        return bits == 8 ? (int)Q3HuffmanMapper.decodeSymbol(this.stream) : (int)this.readNumBits(bits);
+    }
+
+    public function readByte()  {
+        return (int)Q3HuffmanMapper.decodeSymbol(this.stream);
+    }
+
+    public function readShort () {
+        return (int)this.readNumBits(16);
+    }
+
+    public function readInt () {
+        return (int)this.readNumBits(32);
+    }
+
+    public function readLong () {
+        return (int)this.readNumBits(32);
+    }
+
+    public function readFloat () {
+        return (float)Q3Utils.rawBitsToFloat(this.readNumBits(32));
+    }
+
+    public function readAngle16 () {
+        return (float)Q3Utils.SHORT2ANGLE(this.readNumBits(16));
+    }
+
+
+    public function readStringBase (limit, stopAtNewLine) {
+        arr = array();
+        for (i = 0; i < limit; i++) {
+            byte = Q3HuffmanMapper.decodeSymbol(this.stream);
+
+            if (byte <= 0)
+                break;
+
+            if (stopAtNewLine && byte == 0x0A)
+                break;
+
+            // translate all fmt spec to avoid crash bugs
+            // don't allow higher ascii values
+            if (byte > 127 || byte == Q3_PERCENT_CHAR_BYTE)
+                byte = Q3_DOT_CHAR_BYTE;
+
+            arr[] = byte;
+        }
+
+        return (string)call_user_func_array("pack", array_merge(array("C*"), arr));
+    }
+
+    public function readString () {
+        return (string)this.readStringBase (Q3_MAX_STRING_CHARS, false);
+    }
+
+    public function readBigString () {
+        return (string)this.readStringBase (Q3_BIG_INFO_STRING, false);
+    }
+
+    public function readStringLine () {
+        return (string)this.readStringBase (Q3_MAX_STRING_CHARS, true);
+    }
+
+    public function readServerCommand () {
+        return array(
+                'sequence' => this.readLong(),
+                'command' => this.readString()
+            );
+    }
+
+}
+
+class Q3HuffmanMapper {
+
+    private static rootNode;
+
+    public static function decodeSymbol(reader) {
+        node = self.rootNode;
+
+        while (node != null && node.symbol == Q3_HUFFMAN_NYT_SYM) {
+            bit = reader.nextBit();
+            if (bit < 0)
+                return null;
+
+            node = bit == 0 ? node.left : node.right;
+        }
+
+        return node == null ? (int)Q3_HUFFMAN_NYT_SYM : (int)node.symbol;
+    }
+
+    static function __init () {
+        /*
+         * this is packed map of q3-huffman tree
+         * array contains bits sequences in reverse order, prefixed by bit. each value is the bit-coded path in tree,
+         * while index of this array is the decoded value
+         *
+         * for example, the first one (having index 0) is '0x6' in hex and '110' in binary,
+         * read them right-to-left : 0 (left node), 1 (right-node) => 0 (decoded value)
+         *
+         * second example: value  0x00A5 at index 16, 0xA5 = 10100101b, read bits in right-to-left order:
+         * 1 (right), 0 (left), 1 (right), 0 (left), 0 (left), 1 (right), 0 (left) => 16 (decoded value)
+         */
+        symtab = array(
+            0x0006, 0x003B, 0x00C8, 0x00EC, 0x01A1, 0x0111, 0x0090, 0x007F, 0x0035, 0x00B4, 0x00E9, 0x008B, 0x0093, 0x006D, 0x0139, 0x02AC,
+            0x00A5, 0x0258, 0x03F0, 0x03F8, 0x05DD, 0x07F3, 0x062B, 0x0723, 0x02F4, 0x058D, 0x04AB, 0x0763, 0x05EB, 0x0143, 0x024F, 0x01D4,
+            0x0077, 0x04D3, 0x0244, 0x06CD, 0x07C5, 0x07F9, 0x070D, 0x07CD, 0x0294, 0x05AC, 0x0433, 0x0414, 0x0671, 0x06F0, 0x03F4, 0x0178,
+            0x00A7, 0x01C3, 0x01EF, 0x0397, 0x0153, 0x01B1, 0x020D, 0x0361, 0x0207, 0x02F1, 0x0399, 0x0591, 0x0523, 0x02BC, 0x0344, 0x05F3,
+            0x01CF, 0x00D0, 0x00FC, 0x0084, 0x0121, 0x0151, 0x0280, 0x0270, 0x033D, 0x0463, 0x06D7, 0x0771, 0x039D, 0x06AB, 0x05C7, 0x0733,
+            0x032C, 0x049D, 0x056B, 0x076B, 0x05D3, 0x0571, 0x05E3, 0x0633, 0x04D7, 0x06CB, 0x0370, 0x02A8, 0x02C7, 0x0305, 0x02EB, 0x01D8,
+            0x02F3, 0x013C, 0x03AB, 0x038F, 0x0297, 0x00B0, 0x0141, 0x034F, 0x005C, 0x0128, 0x02BD, 0x02C4, 0x0198, 0x028F, 0x010C, 0x01B3,
+            0x0185, 0x018C, 0x0147, 0x0179, 0x00D9, 0x00C0, 0x0117, 0x0119, 0x014B, 0x01E1, 0x01A3, 0x0173, 0x016F, 0x00E8, 0x0088, 0x00E5,
+            0x005F, 0x00A9, 0x00CC, 0x00FD, 0x010F, 0x0183, 0x0101, 0x0187, 0x0167, 0x01E7, 0x0157, 0x0174, 0x03CB, 0x03C4, 0x0281, 0x024D,
+            0x0331, 0x0563, 0x0380, 0x07D7, 0x042B, 0x0545, 0x046B, 0x043D, 0x072B, 0x04F9, 0x04E3, 0x0645, 0x052B, 0x0431, 0x07EB, 0x05B9,
+            0x0314, 0x05F9, 0x0533, 0x042C, 0x06DD, 0x05C1, 0x071D, 0x05D1, 0x0338, 0x0461, 0x06E3, 0x0745, 0x066B, 0x04CD, 0x04CB, 0x054D,
+            0x0238, 0x07C1, 0x063D, 0x07BC, 0x04C5, 0x07AC, 0x07E3, 0x0699, 0x07D3, 0x0614, 0x0603, 0x05BC, 0x069D, 0x0781, 0x0663, 0x048D,
+            0x0154, 0x0303, 0x015D, 0x0060, 0x0089, 0x07C7, 0x0707, 0x01B8, 0x03F1, 0x062C, 0x0445, 0x0403, 0x051D, 0x05C5, 0x074D, 0x041D,
+            0x0200, 0x07B9, 0x04DD, 0x0581, 0x050D, 0x04B9, 0x05CD, 0x0794, 0x05BD, 0x0594, 0x078D, 0x0558, 0x07BD, 0x04C1, 0x07DD, 0x04F8,
+            0x02D1, 0x0291, 0x0499, 0x06F8, 0x0423, 0x0471, 0x06D3, 0x0791, 0x00C9, 0x0631, 0x0507, 0x0661, 0x0623, 0x0118, 0x0605, 0x06C1,
+            0x05D7, 0x04F0, 0x06C5, 0x0700, 0x07D1, 0x07A8, 0x061D, 0x0D00, 0x0405, 0x0758, 0x06F9, 0x05A8, 0x06B9, 0x068D, 0x00AF, 0x0064
+        );
+
+        self.rootNode = new Q3HuffmanNode();
+        // build huffman tree
+        foreach (symtab as sym => path)
+            self._put_sym(sym, path);
+    }
+
+    private static function _put_sym (sym, path) {
+        node = self.rootNode;
+
+        while (path > 1) {
+            if (path & 0x1) {
+                // right side
+                if (node.right == NULL) {
+                    node.right = new Q3HuffmanNode();
+                }
+
+                node = node.right;
+            }
+            else {
+                // left side
+                if (node.left == NULL) {
+                    node.left = new Q3HuffmanNode();
+                }
+
+                node = node.left;
+            }
+            path >>= 1;
+        }
+        node.symbol = sym;
+    }
+}
+
+class Q3HuffmanNode
+{
+    public left;
+    public right;
+    public symbol;
+
+    /**
+     * Q3HuffmanNode constructor.
+     * @param symbol
+     */
+    public function __construct()
+    {
+        this.symbol = Q3_HUFFMAN_NYT_SYM;
+    }
+}
+
+class Q3DemoParser {
+
+    private file_name;
+
+    /**
+     * Q3DemoParser constructor.
+     * @param string file_name - name of demo-file
+     */
+    public function __construct(file_name) {
+        this.file_name = file_name;
+    }
+
+
+    public function parseConfig () {
+        msgParser = new Q3DemoConfigParser ();
+        this.doParse(msgParser);
+        return msgParser.hasConfigs() ? msgParser.getRawConfigs() : NULL;
+    }
+
+    /**
+     *
+     * @throws Exception
+     * @return int messages count in this demo-file
+     */
+    public function countMessages () {
+        return (int)this.doParse(new Q3EmptyParser()).count;
+    }
+
+    private function doParse (AbstractDemoMessageParser msgParser) {
+        messageStream = new Q3MessageStream(this.file_name);
+        try {
+            msg = NULL;
+            while ((msg = messageStream.nextMessage()) != NULL) {
+                if (!msgParser.parse(msg))
+                    break;
+            }
+        }
+        catch (Exception r) {}
+        messageStream.close();
+
+        return msgParser;
+    }
+
+    public static function getRawConfigStrings (file_name) {
+        p = new Q3DemoParser(file_name);
+        return p.parseConfig();
+    }
+
+    public static function getFriendlyConfig (file_name) {
+        conf = self.getRawConfigStrings(file_name);
+
+        if (!isset(conf))
+            return null;
+
+        result = array();
+
+        if (isset(conf[Q3Const.Q3_DEMO_CFG_FIELD_CLIENT])) {
+            result['client'] = Q3Utils.split_config(conf[Q3Const.Q3_DEMO_CFG_FIELD_CLIENT]);
+            result['client_version'] = result['client']['version'];
+            result['physic'] = result['client']['df_promode'] == 0 ? 'vq3' : 'cpm';
+        }
+
+        if (isset(conf[Q3Const.Q3_DEMO_CFG_FIELD_GAME])) {
+            result['game'] = Q3Utils.split_config(conf[Q3Const.Q3_DEMO_CFG_FIELD_GAME]);
+        }
+
+        if (isset(conf[Q3Const.Q3_DEMO_CFG_FIELD_PLAYER])) {
+            result['player'] = Q3Utils.split_config(conf[Q3Const.Q3_DEMO_CFG_FIELD_PLAYER]);
+        }
+
+        result['raw'] = conf;
+
+        return result;
+    }
+
+    public static function countDemoMessages (file_name) {
+        p = new Q3DemoParser(file_name);
+        return (int)p.countMessages();
+    }
+}
+
+class Q3DemoMessage {
+    public sequence;
+    public size;
+    public data;
+
+    /**
+     * Q3DemoMessage constructor.
+     * @param sequence
+     * @param size
+     */
+    public function __construct(sequence, size)
+    {
+        this.sequence = sequence;
+        this.size = size;
+    }
+}
+
+class Q3MessageStream {
+    private fileHandle = FALSE;
+    private readBytes = 0;
+    private readMessages = 0;
+
+    /**
+     * Q3DemoParser constructor.
+     * @param string file_name - name of demo-file
+     * @throws Exception in case file is failed to open
+     */
+    public function __construct(file_name) {
+        this.readBytes = 0;
+        this.readMessages = 0;
+        this.fileHandle = fopen(file_name, "r");
+        if (this.fileHandle === FALSE)
+            throw new Exception("can't open demofile {file_name}...");
+    }
+
+    /**
+     * @return Q3DemoMessage return a next message buffer or null if EOD is reached
+     * @throws Exception in case stream is corrupted
+     */
+    public function nextMessage () {
+        header_buffer = fread(this.fileHandle, 8);
+        if (!header_buffer || strlen(header_buffer) != 8) {
+            return null;
+        }
+
+        this.readBytes += 8;
+        header = unpack("i*", header_buffer);
+        sequence = header[1];
+        msgLength =  header[2];
+
+        if (sequence == -1 && msgLength == -1) {
+            // a normal case, end of message-sequence
+            return null;
+        }
+
+        if (msgLength < 0 || msgLength > Q3_MESSAGE_MAX_SIZE) {
+            throw new Exception("Demo file is corrupted, wrong message length: {msgLength}");
+        }
+
+        msg = new Q3DemoMessage (sequence, msgLength);
+        msg.data = fread(this.fileHandle, msgLength);
+        if (!msg.data)
+            throw new Exception("Unable to read demo-message, corrupted file?");
+
+        this.readBytes += msgLength;
+        this.readMessages++;
+
+        return msg;
+    }
+
+    public function close () {
+        if(this.fileHandle) {
+            fclose(this.fileHandle);
+            this.fileHandle = FALSE;
+        }
+    }
+
+    /**
+     * @return int
+     */
+    public function getReadBytes()
+    {
+        return (int)this.readBytes;
+    }
+
+    /**
+     * @return int
+     */
+    public function getReadMessages()
+    {
+        return (int)this.readMessages;
+    }
+
+    public function __destruct() {
+        this.close();
+    }
+}
+
+interface AbstractDemoMessageParser {
+    public function parse(Q3DemoMessage message);
+}
+
+
+final class Q3EmptyParser implements AbstractDemoMessageParser {
+    public count = 0;
+
+    public function parse(Q3DemoMessage message){
+        ++this.count;
+        return true;
+    }
+}
+
+final class Q3DemoConfigParser implements AbstractDemoMessageParser {
+
+    private configs;
+
+    public function hasConfigs (){
+        return isset(this.configs);
+    }
+
+    public function getRawConfigs () {
+        return this.configs;
+    }
+
+    public function parse(Q3DemoMessage message) {
+        reader = new Q3HuffmanReader (message.data);
+        reader.readLong();
+
+        while (!reader.isEOD()) {
+            switch (reader.readByte()) {
+                case Q3_SVC.BAD:
+                case Q3_SVC.NOP:
+                    return false;
+
+                case Q3_SVC.EOF:
+                    return isset(this.configs);
+
+                case Q3_SVC.SERVERCOMMAND:
+                    reader.readServerCommand();
+                    break;
+
+                case Q3_SVC.GAMESTATE:
+                    this.parseGameState(reader);
+                    return isset(this.configs);
+
+                case Q3_SVC.SNAPSHOT:
+                    // snapshots couldn't be mixed with game-state command in a single message
+                    return false;
+
+                default:
+                    // unknown command / corrupted stream
+                    return false;
+            }
+        }
+    }
+
+    private function parseGameState (Q3HuffmanReader reader) {
+        reader.readLong();
+
+        while (true) {
+            cmd = reader.readByte();
+            if (cmd == Q3_SVC.EOF)
+                break;
+
+            switch (cmd) {
+                case Q3_SVC.CONFIGSTRING:
+                    key = reader.readShort();
+                    if (key < 0 || key > Q3Const.MAX_CONFIGSTRINGS) {
+                        return;
+                    }
+                    if (!isset(this.configs))
+                        this.configs = array();
+
+                    this.configs[key] = reader.readBigString();
+                    break;
+
+                case Q3_SVC.BASELINE:
+                    // assume Baseline command has to follow after config-strings
+                    return;
+
+                default:
+                    //  bad command
+                    return;
+            }
+        }
+
+        //clc.clientNum
+        reader.readLong();
+
+        //clc.checksumFeed
+        reader.readLong();
+    }
+}
+
+class BitStreamReader {
+
+    // array of integers, first value have index '1'
+    // this var holds result of unpack operation
+    private data;
+
+    // the number of bits in this stream
+    private bit_length;
+
+    // cached value of integer taken from data
+    private currentBits;
+
+    // index of bit (read position) in a virtual bit-stream
+    // it'a a sequential number of reads from this stream
+    private bitIdx;
+
+
+    /**
+     * BitStreamReader constructor.
+     * @param data assumes it's a binary string taken from 'fread' call or array of integers
+     */
+    public function __construct(data)
+    {
+        if (is_string(data)) {
+            this.bit_length = strlen(data) * 8;
+            // unpack binary string into array of integers
+            //
+            this.data = unpack("I*",data.str_repeat("\0", 4-((this.bit_length/8)&0x03)));
+        }
+        else if (is_array(data)) {
+            this.bit_length = count(data) * 32;
+            this.data = data;
+        }
+
+        this.reset();
+    }
+
+    /**
+     * Reset this stream. It sets read position to 0 (begin)
+     */
+    public function reset () {
+        this.bitIdx = 0;
+        this.currentBits = reset(this.data);
+    }
+
+    /**
+     * Test if end-of-data is reached
+     * @return bool return TRUE if end-of-data reached, else FALSE
+     */
+    public function isEOD () {
+        return this.bitIdx >= this.bit_length;
+    }
+
+    /**
+     * Read required amount of bits (bits) from this stream.
+     * Result will have all bits in right-to-left order (a normal bits order),
+     * so the first read bit will be lowest
+     * @param int bits amount of bits to read. value has to be in a range 1..32
+     * @return int
+     */
+    public function readBits (int bits) {
+        if (bits < 0 || bits > 32 || this.bitIdx + bits > this.bit_length)
+            return -1;
+
+        value = 0;
+        // bit mask to set for target value
+        setBit = 1;
+
+        // cache read position, local variables access is much faster
+        intIdx = this.bitIdx;
+        // cache curr bits
+        intBits = this.currentBits;
+
+
+        // amount of bits we can read from current cached value
+        currAmount = 32 - (intIdx & 31);
+        tread = bits > currAmount ? currAmount : bits;
+
+        bits -= tread;
+        intIdx += tread;
+
+        while (tread > 0) {
+            if (intBits & 1)
+                value |= setBit;
+
+            setBit <<= 1;
+            intBits >>= 1;
+            --tread;
+        }
+
+        if (bits > 0) {
+            // we have to switch to next int from data-buffer
+            intBits = next(this.data);
+            intIdx += bits;
+
+            while (bits > 0) {
+                if (intBits & 1)
+                    value |= setBit;
+
+                setBit <<= 1;
+                intBits >>= 1;
+                --bits;
+            }
+        }
+
+        // write local values back
+        this.currentBits = intBits;
+        this.bitIdx = intIdx;
+//        echo ", in end read-pos= {intIdx} \n";
+
+        return (int)value;
+    }
+
+    /**
+     * Method read and return next bit value from this stream
+     * @return int returns next bit value (0 or 1) or -1 in case end of data
+     */
+    public function nextBit () {
+        if (this.bitIdx >= this.bit_length)
+            return -1;
+
+        rez = this.currentBits & 1;
+        ++this.bitIdx;
+
+        if (this.bitIdx & 31)
+            this.currentBits >>= 1;
+        else
+            this.currentBits = next(this.data);
+
+        return (int)rez;
+    }
+
+    /**
+     * It skips amount of bits
+     * @param int skip value has to be in range 1..32
+     * @return int returns current bit-read position of this stream
+     */
+    public function skipBits (skip) {
+        if (skip < 0 || skip > 32 || this.bitIdx + skip > this.bit_length)
+            return -1;
+
+        currAmount = 32 - (this.bitIdx & 31);
+        this.bitIdx += skip;
+
+        if (currAmount > skip) {
+            this.currentBits >>= skip;
+        }
+        else {
+            this.currentBits = next(this.data);
+            skip -= currAmount;
+            this.currentBits >>= skip;
+        }
+
+        return (int)this.bitIdx;
+    }
+}
+
+
+class Q3Utils {
+    public static function ANGLE2SHORT (x) {
+        return ((int)(x*65536.0/360.0)) & 65535;
+    }
+
+    public static function SHORT2ANGLE (x) {
+        return ((float)x*(360.0/65536.0));
+    }
+
+    public static function rawBitsToFloat (bits) {
+        sign = bits & 0x80000000 ? -1 : 1;
+        e = (bits >> 23) & 0xFF;
+        m = e ? (bits & 0x7fffff) | 0x800000 : (bits & 0x7fffff) << 1;
+        return (float)sign*m*pow(2,e-150);
+    }
+
+    public static function split_config(src) {
+        begin_ind = substr ( src, 0, 1 ) == '\\' ? 1 : 0;
+        src = explode ( '\\', src );
+        rez = array ();
+
+        for(k = begin_ind; k < sizeof ( src ); k += 2) {
+            rez [strtolower ( src [k] )] = src [k + 1];
+        }
+        return rez;
+    }
+
+}
+
+
+/**
+ * Helper class, simple profiler
+ */
+class Sprof {
+    private name;
+    private last_b;
+
+    private count = 0;
+    private total_time;
+
+    public function __construct (name) {
+        this.name = name;
+    }
+
+    public function begin () {
+        this.last_b = microtime(true);
+        this.count++;
+    }
+
+    public function end () {
+        x = microtime(true);
+        this.total_time += (x - this.last_b);
+    }
+
+    public function getDebug () {
+        return 'SP['.this.name.'] : time='.this.total_time.', count='.this.count.', avg='.(this.count > 0 ? this.total_time/this.count : 0);
+    }
+}
+
+//Q3HuffmanMapper.__init ();
+
+//cfg = Q3DemoParser.getFriendlyConfig("/uploads/demos/cup6/bug-woody[df.cpm]01.08.904(NOOBZ0RN.France)_91689.dm_68");
+//print_r(cfg);
