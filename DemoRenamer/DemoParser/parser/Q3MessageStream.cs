@@ -7,8 +7,8 @@ namespace DemoRenamer.DemoParser.parser
 {
     class Q3MessageStream
     {
+        private BinaryReader binaryReader = null;
         private Stream fileHandle = null;
-        private long readBytes = 0;
         private int readMessages = 0;
 
         /**
@@ -16,12 +16,18 @@ namespace DemoRenamer.DemoParser.parser
          * @param string file_name - name of demo-file
          * @throws Exception in case file is failed to open
          */
-        public Q3MessageStream(string file_name) {
-            this.readBytes = 0;
+        public Q3MessageStream(string file_name)
+        {
             this.readMessages = 0;
             this.fileHandle = File.OpenRead(file_name);
-            if (!fileHandle.CanRead) {
+
+            if (!fileHandle.CanRead)
+            {
                 throw new Exception("can't open demofile {file_name}...");
+            }
+            else
+            {
+                binaryReader = new BinaryReader(fileHandle);
             }
         }
 
@@ -31,22 +37,16 @@ namespace DemoRenamer.DemoParser.parser
         */
         public Q3DemoMessage nextMessage()
         {
-            int cbytes = 8;
-
-            int bytesRead = 0;
-
-            byte[] headerBuffer = new byte[cbytes];
-            bytesRead = fileHandle.Read(headerBuffer, (int) readBytes, cbytes);
-            if (bytesRead != cbytes) {
+            byte[] headerBuffer = binaryReader.ReadBytes(8);
+            if (headerBuffer.Length != 8) {
                 return null;
             }
-            
-            this.readBytes += cbytes;
 
-            if (BitConverter.IsLittleEndian)
-                Array.Reverse(headerBuffer);
+            //if (BitConverter.IsLittleEndian) {
+            //    Array.Reverse(headerBuffer);
+            //}
 
-            long msgLength = BitConverter.ToInt64(headerBuffer, 0);
+            int msgLength = BitConverter.ToInt16(headerBuffer, 0);
 
             if (msgLength == -1) {
                 // a normal case, end of message-sequence
@@ -57,21 +57,22 @@ namespace DemoRenamer.DemoParser.parser
                 throw new Exception("Demo file is corrupted, wrong message length: {msgLength}");
             }
 
-            var msg = new Q3DemoMessage(headerBuffer, (int)msgLength);
+            var msg = new Q3DemoMessage(headerBuffer, msgLength);
 
-            byte[] bodyBuffer = new byte[msgLength];
-            bytesRead = fileHandle.Read(bodyBuffer, (int)readBytes, (int)msgLength);
+            byte[] bodyBuffer = binaryReader.ReadBytes(msgLength);
             msg.data = bodyBuffer;
 
-            this.readBytes += msgLength;
             this.readMessages++;
-
             return msg;
         }
 
         public void close()
         {
-            if (this.fileHandle!= null) {
+            if (binaryReader != null) {
+                binaryReader.Close();
+                binaryReader = null;
+            }
+            if (fileHandle != null) {
                 fileHandle.Close();
                 fileHandle = null;
             }

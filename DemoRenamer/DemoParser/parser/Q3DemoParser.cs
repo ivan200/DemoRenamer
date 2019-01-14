@@ -45,7 +45,9 @@ namespace DemoRenamer
                 while ((msg = messageStream.nextMessage()) != null)
                 {
                     if (!msgParser.parse(msg))
+                    {
                         break;
+                    }
                 }
             }
             catch (Exception r) { }

@@ -21,7 +21,15 @@ namespace DemoRenamer
 
         private void Form1_Load(object sender, EventArgs e)
         {
-
+            var pName = Properties.Settings.Default.fileName;
+            if (pName.Length > 0)
+            {
+                openDemoFile = new FileInfo(pName);
+                if (openDemoFile.Exists)
+                {
+                    textBox1.Text = pName;
+                }
+            }
         }
 
         private void button1_Click(object sender, EventArgs e)
@@ -45,12 +53,22 @@ namespace DemoRenamer
                 return;
             }
 
+            var prop = Properties.Settings.Default;
+            prop.fileName = textBox1.Text;
+            prop.Save();
+
             Q3HuffmanMapper.init();
 
             var cfg = Q3DemoParser.getFriendlyConfig(openDemoFile.FullName);
 
-            String s = "";
-            MessageBox.Show(cfg.ToString());
+            if (cfg == null)
+            {
+                MessageBox.Show("ERROR");
+            }
+            else {
+                MessageBox.Show(cfg.ToString());
+            }
+            
         }
     }
 }
