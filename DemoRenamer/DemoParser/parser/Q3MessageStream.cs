@@ -8,7 +8,7 @@ namespace DemoRenamer.DemoParser.parser
     class Q3MessageStream
     {
         private Stream fileHandle = null;
-        private int readBytes = 0;
+        private long readBytes = 0;
         private int readMessages = 0;
 
         /**
@@ -31,17 +31,22 @@ namespace DemoRenamer.DemoParser.parser
         */
         public Q3DemoMessage nextMessage()
         {
+            int cbytes = 8;
+
             int bytesRead = 0;
 
-            byte[] headerBuffer = new byte[8];
-            bytesRead = fileHandle.Read(headerBuffer, readBytes, 8);
-            if (bytesRead != 8) {
+            byte[] headerBuffer = new byte[cbytes];
+            bytesRead = fileHandle.Read(headerBuffer, (int) readBytes, cbytes);
+            if (bytesRead != cbytes) {
                 return null;
             }
+            
+            this.readBytes += cbytes;
 
-            this.readBytes += 8;
+            if (BitConverter.IsLittleEndian)
+                Array.Reverse(headerBuffer);
 
-            int msgLength = BitConverter.ToInt32(headerBuffer, 0);
+            long msgLength = BitConverter.ToInt64(headerBuffer, 0);
 
             if (msgLength == -1) {
                 // a normal case, end of message-sequence
@@ -52,10 +57,10 @@ namespace DemoRenamer.DemoParser.parser
                 throw new Exception("Demo file is corrupted, wrong message length: {msgLength}");
             }
 
-            var msg = new Q3DemoMessage(headerBuffer, msgLength);
+            var msg = new Q3DemoMessage(headerBuffer, (int)msgLength);
 
             byte[] bodyBuffer = new byte[msgLength];
-            bytesRead = fileHandle.Read(bodyBuffer, readBytes, msgLength);
+            bytesRead = fileHandle.Read(bodyBuffer, (int)readBytes, (int)msgLength);
             msg.data = bodyBuffer;
 
             this.readBytes += msgLength;

@@ -1,4 +1,5 @@
-﻿using System;
+﻿using DemoRenamer.DemoParser.huffman;
+using System;
 using System.Collections.Generic;
 using System.ComponentModel;
 using System.Data;
@@ -44,8 +45,12 @@ namespace DemoRenamer
                 return;
             }
 
+            Q3HuffmanMapper.init();
 
+            var cfg = Q3DemoParser.getFriendlyConfig(openDemoFile.FullName);
 
+            String s = "";
+            MessageBox.Show(cfg.ToString());
         }
     }
 }

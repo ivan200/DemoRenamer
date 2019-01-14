@@ -25,7 +25,7 @@ namespace DemoRenamer.DemoParser.huffman
             return node == null ? (long) Constants.Q3_HUFFMAN_NYT_SYM : (long) node.symbol;
         }
 
-        static Q3HuffmanMapper()
+        public static void init()
         {
             /*
              * this is packed map of q3-huffman tree

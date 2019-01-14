@@ -59,7 +59,6 @@
     <Compile Include="DemoParser\const\Q3_SVC.cs" />
     <Compile Include="DemoParser\utils\BitStreamReader.cs" />
     <Compile Include="DemoParser\utils\Q3Utils.cs" />
-    <Compile Include="DemoParser\utils\Sprof.cs" />
     <Compile Include="Form1.cs">
       <SubType>Form</SubType>
     </Compile>

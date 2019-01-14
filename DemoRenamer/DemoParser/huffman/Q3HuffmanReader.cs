@@ -1,5 +1,7 @@
-﻿using DemoRenamer.DemoParser.utils;
+﻿using DemoRenamer.DemoParser.huffman;
+using DemoRenamer.DemoParser.utils;
 using System;
+using System.Collections;
 using System.Collections.Generic;
 using System.Text;
 
@@ -22,15 +24,15 @@ namespace DemoRenamer.DemoParser
             return (bool)this.stream.isEOD();
         }
 
-        public function readNumBits(bits)
+        public long readNumBits(int bits)
         {
-            value = 0;
-            neg = bits < 0;
+            long value = 0;
+            bool neg = bits < 0;
 
             if (neg)
                 bits = bits * -1;
 
-            fragmentBits = bits & 7;
+            int fragmentBits = bits & 7;
 
             if (fragmentBits != 0)
             {
@@ -40,11 +42,11 @@ namespace DemoRenamer.DemoParser
 
             if (bits > 0)
             {
-                decoded = 0;
-                for (i = 0; i < bits; i += 8)
+                long decoded = 0;
+                for (int i = 0; i < bits; i += 8)
                 {
-                    sym = Q3HuffmanMapper.decodeSymbol(this.stream);
-                    if (sym == Q3_HUFFMAN_NYT_SYM)
+                    long sym = Q3HuffmanMapper.decodeSymbol(this.stream);
+                    if (sym == Constants.Q3_HUFFMAN_NYT_SYM)
                         return -1;
 
                     decoded |= (sym << i);
@@ -67,87 +69,89 @@ namespace DemoRenamer.DemoParser
             return value;
         }
 
-        public function readNumber(bits)
+        public long readNumber(int bits)
         {
-            return bits == 8 ? (int)Q3HuffmanMapper.decodeSymbol(this.stream) : (int)this.readNumBits(bits);
+            return bits == 8 ? Q3HuffmanMapper.decodeSymbol(this.stream) : this.readNumBits(bits);
         }
 
-        public function readByte()
+        public byte readByte()
         {
-            return (int)Q3HuffmanMapper.decodeSymbol(this.stream);
+            return (byte) Q3HuffmanMapper.decodeSymbol(this.stream);
         }
 
-        public function readShort()
+        public short readShort()
         {
-            return (int)this.readNumBits(16);
+            return (short) this.readNumBits(16);
         }
 
-        public function readInt()
+        public int readInt()
         {
-            return (int)this.readNumBits(32);
+            return (int) this.readNumBits(32);
         }
 
-        public function readLong()
+        public long readLong()
         {
-            return (int)this.readNumBits(32);
+            return this.readNumBits(32);
         }
 
-        public function readFloat()
+        public float readFloat()
         {
-            return (float)Q3Utils.rawBitsToFloat(this.readNumBits(32));
+            return (float) Q3Utils.rawBitsToFloat(this.readNumBits(32));
         }
 
-        public function readAngle16()
+        public float readAngle16()
         {
-            return (float)Q3Utils.SHORT2ANGLE(this.readNumBits(16));
+            return (float) Q3Utils.SHORT2ANGLE(this.readNumBits(16));
         }
 
 
-        public function readStringBase(limit, stopAtNewLine)
+        public string readStringBase(int limit, bool stopAtNewLine)
         {
-            arr = array();
-            for (i = 0; i < limit; i++)
+            List<char> arr = new List<char>();
+
+            for (int i = 0; i < limit; i++)
             {
-                byte = Q3HuffmanMapper.decodeSymbol(this.stream);
+                long byte1 = Q3HuffmanMapper.decodeSymbol(this.stream);
 
-                if (byte <= 0)
+                if (byte1 <= 0)
                     break;
 
-                if (stopAtNewLine && byte == 0x0A)
+                if (stopAtNewLine && byte1 == 0x0A)
                     break;
 
                 // translate all fmt spec to avoid crash bugs
                 // don't allow higher ascii values
-                if (byte > 127 || byte == Q3_PERCENT_CHAR_BYTE)
-                    byte = Q3_DOT_CHAR_BYTE;
+                if (byte1 > 127 || byte1 == Constants.Q3_PERCENT_CHAR_BYTE)
+                    byte1 = Constants.Q3_DOT_CHAR_BYTE;
 
-                arr[] = byte;
+                arr.Add((char)byte1);
+                //arr[] = byte1;
             }
 
-            return (string)call_user_func_array("pack", array_merge(array("C*"), arr));
+            return new string(arr.ToArray());
         }
 
-        public function readString()
+        public string readString()
         {
-            return (string)this.readStringBase(Q3_MAX_STRING_CHARS, false);
+            return (string)this.readStringBase(Constants.Q3_MAX_STRING_CHARS, false);
         }
 
-        public function readBigString()
+        public string readBigString()
         {
-            return (string)this.readStringBase(Q3_BIG_INFO_STRING, false);
+            return (string)this.readStringBase(Constants.Q3_BIG_INFO_STRING, false);
         }
 
-        public function readStringLine()
+        public string readStringLine()
         {
-            return (string)this.readStringBase(Q3_MAX_STRING_CHARS, true);
+            return (string)this.readStringBase(Constants.Q3_MAX_STRING_CHARS, true);
         }
 
-        public function readServerCommand()
+        public Dictionary<string, string> readServerCommand()
         {
-            return array(
-                    'sequence' => this.readLong(),
-                    'command' => this.readString()
-                );
+            Dictionary<string, string> rez = new Dictionary<string, string>();
+            rez.Add("sequence", this.readLong().ToString());
+            rez.Add("command", this.readString());
+            return rez;
         }
     }
 }
