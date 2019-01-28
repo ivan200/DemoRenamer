@@ -46,9 +46,10 @@ namespace DemoRenamer.DemoParser.parser
             //    Array.Reverse(headerBuffer);
             //}
 
-            int msgLength = BitConverter.ToInt16(headerBuffer, 0);
+            int sequence = BitConverter.ToInt32(headerBuffer, 0);
+            int msgLength = BitConverter.ToInt32(headerBuffer, 4);
 
-            if (msgLength == -1) {
+            if (sequence == -1 && msgLength == -1) {
                 // a normal case, end of message-sequence
                 return null;
             }
@@ -57,10 +58,9 @@ namespace DemoRenamer.DemoParser.parser
                 throw new Exception("Demo file is corrupted, wrong message length: {msgLength}");
             }
 
-            var msg = new Q3DemoMessage(headerBuffer, msgLength);
+            var msg = new Q3DemoMessage(sequence, msgLength);
 
-            byte[] bodyBuffer = binaryReader.ReadBytes(msgLength);
-            msg.data = bodyBuffer;
+            msg.data = binaryReader.ReadBytes(msgLength);
 
             this.readMessages++;
             return msg;

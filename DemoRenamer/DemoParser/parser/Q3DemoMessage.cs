@@ -6,11 +6,11 @@ namespace DemoRenamer.DemoParser
 {
     class Q3DemoMessage
     {
-        public byte[] sequence;
+        public int sequence;
         public int size;
         public byte[] data;
 
-        public Q3DemoMessage(byte[] sequence, int size) {
+        public Q3DemoMessage(int sequence, int size) {
             this.sequence = sequence;
             this.size = size;
         }
